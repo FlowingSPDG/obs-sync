@@ -145,8 +145,12 @@ pub async fn start_master_server(
 
 #[tauri::command]
 pub async fn stop_master_server(state: State<'_, AppState>) -> Result<(), String> {
+    // Stop master server if running
+    if let Some(server) = state.master_server.write().await.take() {
+        server.stop().await;
+    }
+    
     // Clear master components
-    *state.master_server.write().await = None;
     *state.master_sync.write().await = None;
     *state.obs_event_handler.write().await = None;
     *state.sync_message_tx.lock().await = None;

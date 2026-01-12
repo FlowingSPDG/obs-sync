@@ -3,8 +3,10 @@ use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
+use tokio::task::JoinHandle;
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 type ClientId = String;
@@ -13,6 +15,8 @@ type ClientConnection = WebSocketStream<TcpStream>;
 pub struct MasterServer {
     clients: Arc<RwLock<HashMap<ClientId, mpsc::UnboundedSender<Message>>>>,
     port: u16,
+    shutdown: Arc<AtomicBool>,
+    tasks: Arc<RwLock<Vec<JoinHandle<()>>>>,
 }
 
 impl MasterServer {
@@ -20,7 +24,25 @@ impl MasterServer {
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
             port,
+            shutdown: Arc::new(AtomicBool::new(false)),
+            tasks: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+    
+    pub async fn stop(&self) {
+        // Signal shutdown
+        self.shutdown.store(true, Ordering::SeqCst);
+        
+        // Abort all tasks
+        let tasks = self.tasks.write().await;
+        for task in tasks.iter() {
+            task.abort();
+        }
+        
+        // Clear clients
+        self.clients.write().await.clear();
+        
+        println!("Master server stopped");
     }
 
     pub async fn start(&self, mut sync_rx: mpsc::UnboundedReceiver<SyncMessage>) -> Result<()> {
@@ -32,10 +54,15 @@ impl MasterServer {
         println!("Master server listening on: {}", addr);
 
         let clients = self.clients.clone();
+        let shutdown = self.shutdown.clone();
 
         // Broadcast sync messages to all connected clients
-        tokio::spawn(async move {
+        let broadcast_task = tokio::spawn(async move {
             while let Some(message) = sync_rx.recv().await {
+                if shutdown.load(Ordering::SeqCst) {
+                    break;
+                }
+                
                 let json = match serde_json::to_string(&message) {
                     Ok(j) => j,
                     Err(e) => {
@@ -55,13 +82,31 @@ impl MasterServer {
 
         // Accept incoming connections
         let clients_for_accept = self.clients.clone();
-        tokio::spawn(async move {
-            while let Ok((stream, addr)) = listener.accept().await {
-                println!("New connection from: {}", addr);
-                let clients = clients_for_accept.clone();
-                tokio::spawn(handle_connection(stream, addr.to_string(), clients));
+        let shutdown_for_accept = self.shutdown.clone();
+        let accept_task = tokio::spawn(async move {
+            loop {
+                if shutdown_for_accept.load(Ordering::SeqCst) {
+                    break;
+                }
+                
+                match listener.accept().await {
+                    Ok((stream, addr)) => {
+                        println!("New connection from: {}", addr);
+                        let clients = clients_for_accept.clone();
+                        tokio::spawn(handle_connection(stream, addr.to_string(), clients));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to accept connection: {}", e);
+                        break;
+                    }
+                }
             }
         });
+
+        // Store task handles
+        let mut tasks = self.tasks.write().await;
+        tasks.push(broadcast_task);
+        tasks.push(accept_task);
 
         Ok(())
     }
