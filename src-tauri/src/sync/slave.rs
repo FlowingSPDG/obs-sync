@@ -38,10 +38,9 @@ impl SlaveSync {
     }
 
     pub async fn apply_sync_message(&self, message: SyncMessage) -> Result<()> {
-        let client_opt = self.obs_client.get_client().await;
-        let client_arc = client_opt.context("OBS client not connected")?;
+        let client_arc = self.obs_client.get_client_arc();
         let client_lock = client_arc.read().await;
-        let client = client_lock.as_ref().context("OBS client not available")?;
+        let client = client_lock.as_ref().context("OBS client not connected")?;
 
         match message.message_type {
             SyncMessageType::SceneChange => {
@@ -49,7 +48,7 @@ impl SlaveSync {
                     .as_str()
                     .context("Invalid scene_name in payload")?;
 
-                if let Err(e) = OBSCommands::set_current_program_scene(client, scene_name).await {
+                if let Err(e) = OBSCommands::set_current_program_scene(&client, scene_name).await {
                     self.send_alert(
                         scene_name.to_string(),
                         String::new(),
@@ -68,7 +67,7 @@ impl SlaveSync {
 
                 // Note: Transform data would need to be included in the payload
                 // This is a simplified version
-                if let Err(e) = self.handle_transform_update(client, scene_name, scene_item_id).await {
+                if let Err(e) = self.handle_transform_update(&client, scene_name, scene_item_id).await {
                     self.send_alert(
                         scene_name.to_string(),
                         String::new(),
@@ -83,7 +82,7 @@ impl SlaveSync {
                     .context("Invalid input_name")?;
 
                 // Handle image update
-                if let Err(e) = self.handle_image_update(client, input_name).await {
+                if let Err(e) = self.handle_image_update(&client, input_name).await {
                     self.send_alert(
                         String::new(),
                         input_name.to_string(),
