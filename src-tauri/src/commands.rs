@@ -7,7 +7,7 @@ use crate::network::server::MasterServer;
 use crate::network::client::SlaveClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Emitter, State};
 use tokio::sync::{mpsc, RwLock, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +24,7 @@ pub struct NetworkConfig {
     pub port: u16,
 }
 
+#[derive(Clone)]
 pub struct AppState {
     pub obs_client: Arc<OBSClient>,
     pub mode: Arc<RwLock<Option<AppMode>>>,
@@ -37,6 +38,8 @@ pub struct AppState {
     pub slave_sync: Arc<RwLock<Option<Arc<SlaveSync>>>>,
     // Message channels
     pub sync_message_tx: Arc<Mutex<Option<mpsc::UnboundedSender<SyncMessage>>>>,
+    // Tauri app handle
+    pub app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
 }
 
 impl AppState {
@@ -51,7 +54,12 @@ impl AppState {
             slave_client: Arc::new(RwLock::new(None)),
             slave_sync: Arc::new(RwLock::new(None)),
             sync_message_tx: Arc::new(Mutex::new(None)),
+            app_handle: Arc::new(RwLock::new(None)),
         }
+    }
+    
+    pub async fn set_app_handle(&self, handle: tauri::AppHandle) {
+        *self.app_handle.write().await = Some(handle);
     }
 }
 
@@ -112,24 +120,26 @@ pub async fn start_master_server(
 
     // Create and start MasterServer
     let master_server = Arc::new(MasterServer::new(port));
+    
+    // Set up callback to send initial state when new slave connects
+    let master_sync_for_callback = master_sync.clone();
+    master_server.set_initial_state_callback(move |client_id: String| {
+        let master_sync_clone = master_sync_for_callback.clone();
+        async move {
+            println!("Sending initial state to new slave: {}", client_id);
+            // Small delay to ensure connection is fully established
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if let Err(e) = master_sync_clone.send_initial_state().await {
+                eprintln!("Failed to send initial state to {}: {}", client_id, e);
+            }
+        }
+    }).await;
+    
     master_server
         .start(sync_rx)
         .await
         .map_err(|e| format!("Failed to start master server: {}", e))?;
     *state.master_server.write().await = Some(master_server);
-
-    // Send initial state to any connecting slaves
-    // Note: In a real implementation, you'd want to detect new client connections
-    // and send the initial state only to them. For now, we send it periodically.
-    let master_sync_for_state = master_sync.clone();
-    tokio::spawn(async move {
-        // Wait a bit for slaves to connect
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        // Send initial state
-        if let Err(e) = master_sync_for_state.send_initial_state().await {
-            eprintln!("Failed to send initial state: {}", e);
-        }
-    });
 
     // Create OBS event handler
     let (event_handler, event_rx) = OBSEventHandler::new();
@@ -196,11 +206,16 @@ pub async fn connect_to_master(
     *state.slave_client.write().await = Some(slave_client);
 
     // Create SlaveSync
-    let (slave_sync, _alert_rx) = SlaveSync::new(state.obs_client.clone());
+    let (slave_sync, alert_rx) = SlaveSync::new(state.obs_client.clone());
     let slave_sync = Arc::new(slave_sync);
     *state.slave_sync.write().await = Some(slave_sync.clone());
 
+    // Start periodic state checking (every 5 seconds)
+    slave_sync.start_periodic_check(5);
+    println!("Started periodic desync detection (interval: 5s)");
+
     // Start processing sync messages
+    let slave_sync_for_processing = slave_sync.clone();
     tokio::spawn(async move {
         let mut rx = sync_rx;
         let mut first_message = true;
@@ -211,8 +226,24 @@ pub async fn connect_to_master(
                 first_message = false;
             }
             
-            if let Err(e) = slave_sync.apply_sync_message(message).await {
+            if let Err(e) = slave_sync_for_processing.apply_sync_message(message).await {
                 eprintln!("Failed to apply sync message: {}", e);
+            }
+        }
+    });
+
+    // Start processing alerts (forward to frontend via Tauri events)
+    let app_handle_lock = state.app_handle.clone();
+    tokio::spawn(async move {
+        let mut rx = alert_rx;
+        while let Some(alert) = rx.recv().await {
+            println!("🚨 Desync Alert: {} - {}", alert.scene_name, alert.message);
+            
+            // Emit Tauri event to frontend
+            if let Some(handle) = app_handle_lock.read().await.as_ref() {
+                if let Err(e) = handle.emit("desync-alert", alert.clone()) {
+                    eprintln!("Failed to emit desync alert event: {}", e);
+                }
             }
         }
     });

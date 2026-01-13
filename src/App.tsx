@@ -6,6 +6,7 @@ import "./App.css";
 import { useOBSConnection } from "./hooks/useOBSConnection";
 import { useSyncState } from "./hooks/useSyncState";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
+import { useDesyncAlerts } from "./hooks/useDesyncAlerts";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { MasterControl } from "./components/MasterControl";
 import { SlaveMonitor } from "./components/SlaveMonitor";
@@ -14,7 +15,6 @@ import { AlertPanel } from "./components/AlertPanel";
 import { OBSSourceList } from "./components/OBSSourceList";
 import { AppMode } from "./types/sync";
 import { OBSSource } from "./types/obs";
-import { DesyncAlert } from "./types/sync";
 
 function App() {
   const [appMode, setAppMode] = useState<AppMode | null>(null);
@@ -22,12 +22,12 @@ function App() {
   const [obsPort, setObsPort] = useState(4455);
   const [obsPassword, setObsPassword] = useState("");
   const [sources] = useState<OBSSource[]>([]);
-  const [alerts, setAlerts] = useState<DesyncAlert[]>([]);
   const [isConnectingOBS, setIsConnectingOBS] = useState(false);
 
   const { status: obsStatus, connect, disconnect, error: obsError } = useOBSConnection();
   const { syncState, setMode, error: syncError } = useSyncState();
   const networkStatus = useNetworkStatus();
+  const { alerts, clearAlert } = useDesyncAlerts();
 
   useEffect(() => {
     if (obsError) {
@@ -77,7 +77,7 @@ function App() {
   };
 
   const handleClearAlert = (id: string) => {
-    setAlerts((prev) => prev.filter((alert) => alert.id !== id));
+    clearAlert(id);
   };
 
   const handleResetMode = async () => {

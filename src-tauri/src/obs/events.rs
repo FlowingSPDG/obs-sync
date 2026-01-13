@@ -26,38 +26,16 @@ impl OBSEventHandler {
     pub async fn start_listening(&self, _client: &Client) -> anyhow::Result<()> {
         let _tx = self.event_tx.clone();
 
+        // Note: Event listening implementation depends on obws library version
+        // This is a placeholder that keeps the event listener task alive
+        // TODO: Implement actual event subscription based on obws version in use
         tokio::spawn(async move {
-            // Subscribe to events from OBS
-            // Note: obws library provides event streaming
-            // The exact implementation depends on the obws version
+            println!("Started OBS event listening (placeholder implementation)");
+            println!("Note: Full event integration requires obws events API configuration");
             
-            // For demonstration, we'll create a simple polling mechanism
-            // In production, you would use client.events() stream properly
-            
-            println!("Started listening to OBS events");
-            
-            // Placeholder: In real implementation, you would:
-            // 1. Get event stream from client
-            // 2. Match on event types
-            // 3. Send corresponding OBSEvent to channel
-            
-            // Example pseudo-code:
-            // let mut events = client.events();
-            // while let Some(event) = events.recv().await {
-            //     match event {
-            //         Event::CurrentProgramSceneChanged(data) => {
-            //             let _ = tx.send(OBSEvent::SceneChanged {
-            //                 scene_name: data.scene_name,
-            //             });
-            //         }
-            //         // ... other event types
-            //         _ => {}
-            //     }
-            // }
-            
-            // For now, we keep the connection alive
+            // Keep task alive
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
             }
         });
 

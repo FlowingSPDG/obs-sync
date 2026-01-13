@@ -71,16 +71,46 @@ impl MasterSync {
                         scene_item_id,
                     } => {
                         if targets.contains(&SyncTargetType::Source) {
-                            let payload = serde_json::json!({
-                                "scene_name": scene_name,
-                                "scene_item_id": scene_item_id
+                            // Get the full transform data
+                            let obs_client_clone = obs_client.clone();
+                            let message_tx_clone = message_tx.clone();
+                            let scene_name_clone = scene_name.clone();
+                            
+                            tokio::spawn(async move {
+                                let client_arc = obs_client_clone.get_client_arc();
+                                let client_lock = client_arc.read().await;
+                                
+                                if let Some(client) = client_lock.as_ref() {
+                                    match client.scene_items().transform(&scene_name_clone, scene_item_id).await {
+                                        Ok(transform) => {
+                                            let payload = serde_json::json!({
+                                                "scene_name": scene_name_clone,
+                                                "scene_item_id": scene_item_id,
+                                                "transform": {
+                                                    "position_x": transform.position_x,
+                                                    "position_y": transform.position_y,
+                                                    "rotation": transform.rotation,
+                                                    "scale_x": transform.scale_x,
+                                                    "scale_y": transform.scale_y,
+                                                    "width": transform.width,
+                                                    "height": transform.height,
+                                                }
+                                            });
+                                            
+                                            let msg = SyncMessage::new(
+                                                SyncMessageType::TransformUpdate,
+                                                SyncTargetType::Source,
+                                                payload,
+                                            );
+                                            let _ = message_tx_clone.send(msg);
+                                            println!("Sent transform update for scene item {} in {}", scene_item_id, scene_name_clone);
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Failed to get transform for item {}: {}", scene_item_id, e);
+                                        }
+                                    }
+                                }
                             });
-                            let msg = SyncMessage::new(
-                                SyncMessageType::TransformUpdate,
-                                SyncTargetType::Source,
-                                payload,
-                            );
-                            let _ = message_tx.send(msg);
                         }
                     }
                     OBSEvent::InputSettingsChanged { input_name } => {
@@ -206,12 +236,13 @@ impl MasterSync {
 
     /// Send initial state to newly connected slave
     pub async fn send_initial_state(&self) -> Result<()> {
+        println!("Collecting full OBS state for new slave...");
         let client_arc = self.obs_client.get_client_arc();
         let client_lock = client_arc.read().await;
         
         if let Some(client) = client_lock.as_ref() {
             // Get current program scene
-            let current_scene = match client.scenes().current_program_scene().await {
+            let current_program_scene = match client.scenes().current_program_scene().await {
                 Ok(scene) => scene,
                 Err(e) => {
                     eprintln!("Failed to get current scene: {}", e);
@@ -220,13 +251,86 @@ impl MasterSync {
             };
 
             // Get preview scene if in studio mode
-            let preview_scene = client.scenes().current_preview_scene().await.ok();
+            let current_preview_scene = client.scenes().current_preview_scene().await.ok();
 
-            // Create initial state payload
+            // Get all scenes
+            let scenes_list = match client.scenes().list().await {
+                Ok(scenes) => scenes,
+                Err(e) => {
+                    eprintln!("Failed to get scenes list: {}", e);
+                    return Ok(());
+                }
+            };
+
+            let mut scenes_data = Vec::new();
+            
+            // For each scene, get all items
+            for scene in scenes_list.scenes {
+                println!("Processing scene: {}", scene.name);
+                
+                match client.scene_items().list(&scene.name).await {
+                    Ok(items) => {
+                        let mut scene_items_data = Vec::new();
+                        
+                        for item in items {
+                            println!("  - Item: {} (id: {})", item.source_name, item.id);
+                            
+                            // Get transform for this item
+                            let transform = match client.scene_items().transform(&scene.name, item.id).await {
+                                Ok(t) => Some(serde_json::json!({
+                                    "position_x": t.position_x,
+                                    "position_y": t.position_y,
+                                    "rotation": t.rotation,
+                                    "scale_x": t.scale_x,
+                                    "scale_y": t.scale_y,
+                                    "width": t.width,
+                                    "height": t.height,
+                                })),
+                                Err(e) => {
+                                    eprintln!("Failed to get transform for {}: {}", item.source_name, e);
+                                    None
+                                }
+                            };
+
+                            // Get source type from item
+                            let source_type = item.input_kind.clone().unwrap_or_else(|| "unknown".to_string());
+
+                            // If it's an image source, get the image data
+                            let image_data = if source_type.contains("image") {
+                                self.get_image_data_for_source(&item.source_name).await
+                                    .map(|(path, data)| serde_json::json!({
+                                        "file": path,
+                                        "data": data
+                                    }))
+                            } else {
+                                None
+                            };
+
+                            scene_items_data.push(serde_json::json!({
+                                "source_name": item.source_name,
+                                "scene_item_id": item.id,
+                                "source_type": source_type,
+                                "transform": transform,
+                                "image_data": image_data,
+                            }));
+                        }
+                        
+                        scenes_data.push(serde_json::json!({
+                            "name": scene.name,
+                            "items": scene_items_data,
+                        }));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to get items for scene {}: {}", scene.name, e);
+                    }
+                }
+            }
+
+            // Create comprehensive initial state payload
             let payload = serde_json::json!({
-                "current_program_scene": current_scene,
-                "current_preview_scene": preview_scene,
-                "scenes": []  // TODO: Get all scenes and sources
+                "current_program_scene": current_program_scene,
+                "current_preview_scene": current_preview_scene,
+                "scenes": scenes_data,
             });
 
             let msg = SyncMessage::new(
@@ -236,7 +340,7 @@ impl MasterSync {
             );
 
             self.message_tx.send(msg)?;
-            println!("Sent initial state to slave");
+            println!("✓ Sent complete initial state to slave ({} scenes)", scenes_data.len());
         }
 
         Ok(())
