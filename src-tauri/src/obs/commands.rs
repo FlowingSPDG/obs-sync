@@ -42,30 +42,65 @@ impl OBSCommands {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub async fn set_scene_item_transform(
-        _client: &Client,
-        _scene_name: &str,
-        _scene_item_id: i64,
-        _transform: SceneItemTransform,
+        client: &Client,
+        scene_name: &str,
+        scene_item_id: i64,
+        transform: SceneItemTransform,
     ) -> Result<()> {
-        // Transform setting would be implemented based on the actual obws API
+        client
+            .scene_items()
+            .set_transform(obws::requests::scene_items::SetTransform {
+                scene: scene_name,
+                item_id: scene_item_id,
+                position_x: Some(transform.position_x),
+                position_y: Some(transform.position_y),
+                rotation: Some(transform.rotation),
+                scale_x: Some(transform.scale_x),
+                scale_y: Some(transform.scale_y),
+                ..Default::default()
+            })
+            .await
+            .context("Failed to set scene item transform")?;
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub async fn get_scene_item_list(_client: &Client, _scene_name: &str) -> Result<Vec<Value>> {
-        // Scene item list retrieval would be implemented based on the actual obws API
-        Ok(vec![])
+    pub async fn get_scene_item_list(client: &Client, scene_name: &str) -> Result<Vec<Value>> {
+        let items = client
+            .scene_items()
+            .list(scene_name)
+            .await
+            .context("Failed to get scene item list")?;
+
+        let result = items
+            .into_iter()
+            .map(|item| {
+                serde_json::json!({
+                    "scene_item_id": item.id,
+                    "source_name": item.source_name,
+                    "source_type": item.source_type,
+                    "enabled": item.enabled,
+                })
+            })
+            .collect();
+
+        Ok(result)
     }
 
-    #[allow(dead_code)]
     pub async fn set_input_settings(
-        _client: &Client,
-        _input_name: &str,
-        _settings: &Value,
+        client: &Client,
+        input_name: &str,
+        settings: &Value,
     ) -> Result<()> {
-        // Input settings would be implemented based on the actual obws API
+        client
+            .inputs()
+            .set_settings(obws::requests::inputs::SetSettings {
+                input: input_name,
+                settings,
+                overlay: Some(true),
+            })
+            .await
+            .context("Failed to set input settings")?;
         Ok(())
     }
 }

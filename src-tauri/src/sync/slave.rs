@@ -313,26 +313,64 @@ impl SlaveSync {
 
     async fn apply_transform(
         &self,
-        _client: &obws::Client,
+        client: &obws::Client,
         scene_name: &str,
         scene_item_id: i64,
         transform: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<()> {
-        // Note: Transform application depends on obws library API structure
-        // This is a placeholder implementation
-        // TODO: Implement actual transform application based on obws version
-        
         println!(
-            "Transform update received for item {} in scene {}: {:?}",
+            "Applying transform for item {} in scene {}: {:?}",
             scene_item_id, scene_name, transform
         );
-        
-        // In production, you would use obws API to apply the transform:
-        // - Extract position_x, position_y
-        // - Extract scale_x, scale_y
-        // - Extract rotation
-        // - Call appropriate obws method to set transform
-        
+
+        // Extract transform values from the JSON payload
+        let position_x = transform.get("position_x")
+            .and_then(|v| v.as_f64());
+        let position_y = transform.get("position_y")
+            .and_then(|v| v.as_f64());
+        let scale_x = transform.get("scale_x")
+            .and_then(|v| v.as_f64());
+        let scale_y = transform.get("scale_y")
+            .and_then(|v| v.as_f64());
+        let rotation = transform.get("rotation")
+            .and_then(|v| v.as_f64());
+
+        // Build the transform struct for obws
+        let mut obws_transform = obws::requests::scene_items::SetTransform {
+            scene: scene_name,
+            item_id: scene_item_id,
+            ..Default::default()
+        };
+
+        // Apply available transform properties
+        if let Some(x) = position_x {
+            obws_transform.position_x = Some(x);
+        }
+        if let Some(y) = position_y {
+            obws_transform.position_y = Some(y);
+        }
+        if let Some(sx) = scale_x {
+            obws_transform.scale_x = Some(sx);
+        }
+        if let Some(sy) = scale_y {
+            obws_transform.scale_y = Some(sy);
+        }
+        if let Some(rot) = rotation {
+            obws_transform.rotation = Some(rot);
+        }
+
+        // Apply the transform using obws API
+        client
+            .scene_items()
+            .set_transform(obws_transform)
+            .await
+            .context("Failed to apply transform to scene item")?;
+
+        println!(
+            "✓ Successfully applied transform to item {} in scene {}",
+            scene_item_id, scene_name
+        );
+
         Ok(())
     }
 

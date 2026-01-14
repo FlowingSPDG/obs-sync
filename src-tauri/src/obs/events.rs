@@ -23,20 +23,69 @@ impl OBSEventHandler {
         (Self { event_tx: tx }, rx)
     }
 
-    pub async fn start_listening(&self, _client: &Client) -> anyhow::Result<()> {
-        let _tx = self.event_tx.clone();
+    pub async fn start_listening(&self, client: &Client) -> anyhow::Result<()> {
+        let tx = self.event_tx.clone();
 
-        // Note: Event listening implementation depends on obws library version
-        // This is a placeholder that keeps the event listener task alive
-        // TODO: Implement actual event subscription based on obws version in use
+        // Get event stream from obws client
+        let events = client.events();
+
         tokio::spawn(async move {
-            println!("Started OBS event listening (placeholder implementation)");
-            println!("Note: Full event integration requires obws events API configuration");
-            
-            // Keep task alive
+            println!("✓ Started OBS event listening");
+
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                match events.recv().await {
+                    Ok(event) => {
+                        // Map obws events to our internal event type
+                        let obs_event = match event {
+                            obws::events::Event::CurrentProgramSceneChanged { scene_name } => {
+                                println!("Event: Scene changed to {}", scene_name);
+                                Some(OBSEvent::SceneChanged { scene_name })
+                            }
+                            obws::events::Event::SceneItemTransformChanged { scene_name, scene_item_id } => {
+                                println!("Event: Transform changed for item {} in scene {}", scene_item_id, scene_name);
+                                Some(OBSEvent::SceneItemTransformChanged {
+                                    scene_name,
+                                    scene_item_id
+                                })
+                            }
+                            obws::events::Event::InputCreated { input_name, .. } => {
+                                println!("Event: Source created: {}", input_name);
+                                Some(OBSEvent::SourceCreated { source_name: input_name })
+                            }
+                            obws::events::Event::InputRemoved { input_name } => {
+                                println!("Event: Source destroyed: {}", input_name);
+                                Some(OBSEvent::SourceDestroyed { source_name: input_name })
+                            }
+                            obws::events::Event::InputSettingsChanged { input_name, .. } => {
+                                println!("Event: Input settings changed: {}", input_name);
+                                Some(OBSEvent::InputSettingsChanged { input_name })
+                            }
+                            obws::events::Event::CurrentPreviewSceneChanged { scene_name } => {
+                                println!("Event: Preview scene changed to {}", scene_name);
+                                Some(OBSEvent::CurrentPreviewSceneChanged { scene_name })
+                            }
+                            _ => {
+                                // Ignore other event types
+                                None
+                            }
+                        };
+
+                        // Send mapped event to the channel
+                        if let Some(evt) = obs_event {
+                            if let Err(e) = tx.send(evt) {
+                                eprintln!("Failed to send OBS event: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error receiving OBS event: {}", e);
+                        break;
+                    }
+                }
             }
+
+            println!("OBS event listener stopped");
         });
 
         Ok(())
