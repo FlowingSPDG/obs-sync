@@ -7,6 +7,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::fs;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesyncAlert {
     pub id: String,
     pub timestamp: i64,
@@ -17,6 +18,7 @@ pub struct DesyncAlert {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AlertSeverity {
     Warning,
     Error,

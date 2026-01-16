@@ -7,13 +7,27 @@ export const useDesyncAlerts = () => {
 
   useEffect(() => {
     // Listen for desync-alert events from Tauri backend
-    const unlisten = listen<DesyncAlert>("desync-alert", (event) => {
-      console.log("Received desync alert:", event.payload);
-      setAlerts((prev) => [event.payload, ...prev].slice(0, 50)); // Keep last 50 alerts
-    });
+    let unlistenFn: (() => void) | null = null;
+
+    const setupListener = async () => {
+      const unlisten = await listen<DesyncAlert>("desync-alert", (event) => {
+        console.log("Received desync alert:", event.payload);
+        // Ensure severity is lowercase to match TypeScript type
+        const alert: DesyncAlert = {
+          ...event.payload,
+          severity: (event.payload.severity as string).toLowerCase() as "warning" | "error",
+        };
+        setAlerts((prev) => [alert, ...prev].slice(0, 50)); // Keep last 50 alerts
+      });
+      unlistenFn = unlisten;
+    };
+
+    setupListener();
 
     return () => {
-      unlisten.then((fn) => fn());
+      if (unlistenFn) {
+        unlistenFn();
+      }
     };
   }, []);
 

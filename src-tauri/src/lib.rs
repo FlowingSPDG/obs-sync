@@ -34,6 +34,7 @@ pub fn run() {
             commands::connect_to_master,
             commands::disconnect_from_master,
             commands::set_sync_targets,
+            commands::get_connected_clients_count,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

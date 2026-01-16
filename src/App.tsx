@@ -27,7 +27,7 @@ function App() {
   const { status: obsStatus, connect, disconnect, error: obsError } = useOBSConnection();
   const { syncState, setMode, error: syncError } = useSyncState();
   const networkStatus = useNetworkStatus();
-  const { alerts, clearAlert } = useDesyncAlerts();
+  const { alerts, clearAlert, clearAllAlerts } = useDesyncAlerts();
 
   useEffect(() => {
     if (obsError) {
@@ -309,7 +309,7 @@ function App() {
             )}
 
             {/* Sources and Alerts */}
-            {obsStatus.connected && syncState.isActive && (
+            {obsStatus.connected && (
               <div className="info-panels">
                 {sources.length > 0 && (
                   <section className="section">
@@ -328,10 +328,14 @@ function App() {
                     <div className="section-header">
                       <h2>
                         <span className="section-icon">⚠️</span>
-                        アラート
+                        アラート・ログ
                       </h2>
                     </div>
-                    <AlertPanel alerts={alerts} onClearAlert={handleClearAlert} />
+                    <AlertPanel 
+                      alerts={alerts} 
+                      onClearAlert={handleClearAlert}
+                      onClearAllAlerts={clearAllAlerts}
+                    />
                   </section>
                 )}
               </div>

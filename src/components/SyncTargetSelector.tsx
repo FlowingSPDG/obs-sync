@@ -50,6 +50,8 @@ export const SyncTargetSelector = () => {
     <div className="sync-target-selector">
       <p className="selector-description">
         同期する対象を選択してください。選択した要素の変更がリアルタイムで同期されます。
+        <br />
+        <span className="selector-note">※ Masterモードでサーバー起動中でもリアルタイムで変更可能です</span>
       </p>
       
       <div className="target-grid">
@@ -94,6 +96,14 @@ export const SyncTargetSelector = () => {
           color: var(--text-secondary);
           margin: 0;
           line-height: 1.6;
+        }
+
+        .selector-note {
+          display: block;
+          margin-top: 0.5rem;
+          font-size: 0.875rem;
+          color: var(--primary-color);
+          font-weight: 500;
         }
 
         .target-grid {

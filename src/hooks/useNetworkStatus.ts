@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { NetworkStatus, ConnectionState } from "../types/network";
 
@@ -12,6 +12,21 @@ export const useNetworkStatus = () => {
     state: ConnectionState.Disconnected,
   });
   const [error, setError] = useState<string | null>(null);
+  const pollingIntervalRef = useRef<number | null>(null);
+
+  const updateClientCount = useCallback(async () => {
+    try {
+      const count = await invoke<number>("get_connected_clients_count");
+      setStatus((prev) => {
+        if (prev.state === ConnectionState.Connected) {
+          return { ...prev, connectedClients: count };
+        }
+        return prev;
+      });
+    } catch (err) {
+      console.error("Failed to get connected clients count:", err);
+    }
+  }, []);
 
   const startMasterServer = useCallback(async (port: number) => {
     try {
@@ -19,6 +34,10 @@ export const useNetworkStatus = () => {
       await invoke("start_master_server", { port });
       setStatus({ state: ConnectionState.Connected, connectedClients: 0 });
       setError(null);
+      
+      // Start polling for client count
+      updateClientCount();
+      pollingIntervalRef.current = window.setInterval(updateClientCount, 1000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(errorMessage);
@@ -28,10 +47,16 @@ export const useNetworkStatus = () => {
       });
       throw err;
     }
-  }, []);
+  }, [updateClientCount]);
 
   const stopMasterServer = useCallback(async () => {
     try {
+      // Stop polling
+      if (pollingIntervalRef.current !== null) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      
       await invoke("stop_master_server");
       setStatus({ state: ConnectionState.Disconnected });
       setError(null);
@@ -69,6 +94,15 @@ export const useNetworkStatus = () => {
       setError(errorMessage);
       throw err;
     }
+  }, []);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current !== null) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
   }, []);
 
   return {

@@ -286,6 +286,15 @@ pub async fn set_sync_targets(
 }
 
 #[tauri::command]
+pub async fn get_connected_clients_count(state: State<'_, AppState>) -> Result<usize, String> {
+    if let Some(server) = state.master_server.read().await.as_ref() {
+        Ok(server.get_connected_clients_count().await)
+    } else {
+        Ok(0)
+    }
+}
+
+#[tauri::command]
 pub fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
